@@ -95,7 +95,12 @@ local function _find_create_box(old_fn)
     local n, v = debug.getupvalue(old_fn, i)
     if n == nil then break end
     if type(v) == "function" then
+      -- Save and restore SMODS.LAST_VIEWED_MODS_PAGE around the probe call,
+      -- because calling recalculateModsList (another upvalue) with a non-number
+      -- argument would corrupt this global and cause a crash later.
+      local saved_page = SMODS.LAST_VIEWED_MODS_PAGE
       local ok, result = pcall(v, SMODS.mod_list[1], MOD_BOX_SCALE)
+      SMODS.LAST_VIEWED_MODS_PAGE = saved_page
       if ok and type(result) == "table" and result.n == G.UIT.C then
         return v
       end
