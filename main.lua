@@ -1,7 +1,7 @@
 --- STEAMODDED HEADER
 --- MOD_NAME: Balatro Mod Sort
 --- MOD_ID: BalatroModSort
---- MOD_AUTHOR: [ChatGPT]
+--- MOD_AUTHOR: [SilvertongueRED, ChatGPT, Claude]
 --- MOD_DESCRIPTION: Sort your Mods menu by name, recently updated, or config changes — without changing load order.
 --- PRIORITY: 1000000000
 --- BADGE_COLOUR: 5A2D82
