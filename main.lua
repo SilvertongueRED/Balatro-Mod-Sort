@@ -59,6 +59,86 @@ local function _sorted_copy(mod_list)
   return t
 end
 
+-- Pagination constants matching Steamodded's defaults (src/ui.lua ~line 1959).
+local MODS_ROWS_PER_PAGE = 4
+local MODS_COLS_PER_ROW  = 3
+-- Scale at which each mod box is rendered (Steamodded passes 0.75 * 0.5).
+local MOD_BOX_SCALE      = 0.375
+
+-- Inlined pagination logic from Steamodded's recalculateModsList (src/ui.lua ~line 1959).
+-- Returns: nil, nil, showingList, startIndex, endIndex, modsRowPerPage, modsColPerRow
+local function _inline_recalc(page, total)
+  page = page or 1
+  local startIndex = (page - 1) * MODS_ROWS_PER_PAGE * MODS_COLS_PER_ROW + 1
+  local endIndex   = startIndex + MODS_ROWS_PER_PAGE * MODS_COLS_PER_ROW - 1
+  local showingList = total > 0
+  return nil, nil, showingList, startIndex, endIndex, MODS_ROWS_PER_PAGE, MODS_COLS_PER_ROW
+end
+
+-- Try to locate createClickableModBox: first by upvalue name, then by probing all
+-- function-type upvalues of old_fn.  Returns nil when the debug library is absent
+-- or no matching candidate is found.
+local function _find_create_box(old_fn)
+  if not debug or type(debug.getupvalue) ~= "function" then return nil end
+
+  -- Try the known upvalue name first.
+  local cb = _try_get_upvalue(old_fn, "createClickableModBox")
+  if cb then return cb end
+
+  -- Iterate every upvalue and test function-type candidates.
+  -- createClickableModBox(modInfo, scale) returns a {n = G.UIT.C, ...} table.
+  if not (G and G.UIT and SMODS and SMODS.mod_list and SMODS.mod_list[1]) then
+    return nil
+  end
+  local i = 1
+  while true do
+    local n, v = debug.getupvalue(old_fn, i)
+    if n == nil then break end
+    if type(v) == "function" then
+      local ok, result = pcall(v, SMODS.mod_list[1], MOD_BOX_SCALE)
+      if ok and type(result) == "table" and result.n == G.UIT.C then
+        return v
+      end
+    end
+    i = i + 1
+  end
+  return nil
+end
+
+-- Build the shared single-pass mod-grid body used when create_box is available.
+local function _build_grid(sorted, startIndex, endIndex, modsRowPerPage, modsColPerRow, create_box)
+  local modNodes    = {}
+  local modCount    = 0
+  local id          = 0
+  local current_row = {}
+
+  for _, modInfo in ipairs(sorted) do
+    if modCount >= modsRowPerPage * modsColPerRow then break end
+    id = id + 1
+    if id >= startIndex and id <= endIndex then
+      table.insert(current_row, create_box(modInfo, MOD_BOX_SCALE))
+      modCount = modCount + 1
+      if modCount % modsColPerRow == 0 then
+        table.insert(modNodes, {
+          n = G.UIT.R,
+          config = { padding = 0, align = "lc" },
+          nodes = current_row
+        })
+        current_row = {}
+      end
+    end
+  end
+
+  if #current_row > 0 then
+    table.insert(modNodes, {
+      n = G.UIT.R,
+      config = { padding = 0, align = "lc" },
+      nodes = current_row
+    })
+  end
+  return modNodes
+end
+
 local function _patch_dynamic()
   if not SMODS or not SMODS.GUI then return false end
   if SMODS.GUI.__amz_patched then return true end
@@ -66,19 +146,14 @@ local function _patch_dynamic()
 
   local old = SMODS.GUI.dynamicModListContent
 
-  -- Extract Steamodded-internal local functions via upvalues so we can build
-  -- a full replacement that merges the config/no-config sections into one pass.
-  local create_box  = _try_get_upvalue(old, "createClickableModBox")
-  local recalc_list = _try_get_upvalue(old, "recalculateModsList")
+  local create_box = _find_create_box(old)
 
-  if create_box and recalc_list then
-    -- Full replacement: combines the two can_load passes (with/without config_tab)
-    -- into a single alphabetical section.
+  if create_box then
+    -- Full replacement: single alphabetical pass, no grouping by can_load / config_tab.
     SMODS.GUI.dynamicModListContent = function(page)
-      local scale   = 0.75
       local sorted  = _sorted_copy(SMODS.mod_list)
       local _, _, showingList, startIndex, endIndex, modsRowPerPage, modsColPerRow =
-        recalc_list(page)
+        _inline_recalc(page, #sorted)
       local modNodes = {}
 
       if not showingList then
@@ -87,28 +162,81 @@ local function _patch_dynamic()
           config = { padding = 0, align = "cm" },
           nodes = {{ n = G.UIT.T, config = {
             text = localize('b_no_mods'), shadow = true,
-            scale = scale * 0.5, colour = G.C.UI.TEXT_DARK
+            scale = MOD_BOX_SCALE, colour = G.C.UI.TEXT_DARK
           }}}
         })
       else
-        local modCount    = 0
+        modNodes = _build_grid(sorted, startIndex, endIndex, modsRowPerPage, modsColPerRow, create_box)
+      end
+
+      return { n = G.UIT.C, config = { r = 0.1, align = "cm", padding = 0 }, nodes = modNodes }
+    end
+  else
+    -- Robust fallback: call the original function once per mod (with a temporary
+    -- single-element mod list) to extract each mod's pre-rendered UI box, then
+    -- assemble them in alphabetical order with our own pagination.  This avoids
+    -- any dependence on debug.getupvalue and still produces a single A→Z list.
+    SMODS.GUI.dynamicModListContent = function(page)
+      local sorted  = _sorted_copy(SMODS.mod_list)
+      local total   = #sorted
+      local _, _, showingList, startIndex, endIndex, modsRowPerPage, modsColPerRow =
+        _inline_recalc(page, total)
+      local modNodes = {}
+
+      if not showingList then
+        local ok, res = pcall(old, page)
+        if ok and res then return res end
+        table.insert(modNodes, {
+          n = G.UIT.R,
+          config = { padding = 0, align = "cm" },
+          nodes = {{ n = G.UIT.T, config = {
+            text = localize('b_no_mods'), shadow = true,
+            scale = MOD_BOX_SCALE, colour = G.C.UI.TEXT_DARK
+          }}}
+        })
+      else
+        local orig_list   = SMODS.mod_list
         local id          = 0
+        local modCount    = 0
         local current_row = {}
 
-        -- Single pass: pure alphabetical, no grouping
         for _, modInfo in ipairs(sorted) do
           if modCount >= modsRowPerPage * modsColPerRow then break end
           id = id + 1
           if id >= startIndex and id <= endIndex then
-            table.insert(current_row, create_box(modInfo, scale * 0.5))
-            modCount = modCount + 1
-            if modCount % modsColPerRow == 0 then
-              table.insert(modNodes, {
-                n = G.UIT.R,
-                config = { padding = 0, align = "lc" },
-                nodes = current_row
-              })
-              current_row = {}
+            -- Temporarily replace mod_list so the original function renders only
+            -- this one mod, letting createClickableModBox run naturally.
+            SMODS.mod_list = { modInfo }
+            local ok, res = pcall(old, 1)
+            SMODS.mod_list = orig_list  -- always restore immediately
+
+            -- Extract the first G.UIT.C node from the returned tree.
+            local box = nil
+            if ok and type(res) == "table" and res.nodes then
+              for _, row in ipairs(res.nodes) do
+                if type(row) == "table" and row.nodes then
+                  for _, b in ipairs(row.nodes) do
+                    if type(b) == "table" and b.n == G.UIT.C then
+                      box = b
+                      break
+                    end
+                  end
+                end
+                if box then break end
+              end
+            end
+
+            if box then
+              table.insert(current_row, box)
+              modCount = modCount + 1
+              if modCount % modsColPerRow == 0 then
+                table.insert(modNodes, {
+                  n = G.UIT.R,
+                  config = { padding = 0, align = "lc" },
+                  nodes = current_row
+                })
+                current_row = {}
+              end
             end
           end
         end
@@ -123,21 +251,6 @@ local function _patch_dynamic()
       end
 
       return { n = G.UIT.C, config = { r = 0.1, align = "cm", padding = 0 }, nodes = modNodes }
-    end
-  else
-    -- Fallback when the debug library or upvalue names are unavailable:
-    -- sort mod_list so each section is alphabetical even if they remain separate.
-    SMODS.GUI.dynamicModListContent = function(page, ...)
-      local orig    = SMODS.mod_list
-      local swapped = false
-      if type(orig) == "table" then
-        SMODS.mod_list = _sorted_copy(orig)
-        swapped = true
-      end
-      local ok, res = pcall(old, page, ...)
-      if swapped then SMODS.mod_list = orig end
-      if not ok then error(res) end
-      return res
     end
   end
 
