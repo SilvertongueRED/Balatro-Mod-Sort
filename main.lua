@@ -111,35 +111,39 @@ local function _find_create_box(old_fn)
 end
 
 -- Build the shared single-pass mod-grid body used when create_box is available.
+-- Uses column-major ordering so that reading top-to-bottom per column gives
+-- alphabetical order (matching the original Steamodded layout direction).
 local function _build_grid(sorted, startIndex, endIndex, modsRowPerPage, modsColPerRow, create_box)
-  local modNodes    = {}
-  local modCount    = 0
-  local id          = 0
-  local current_row = {}
-
+  -- Collect the page's mods into a flat list.
+  local page_mods = {}
+  local id = 0
   for _, modInfo in ipairs(sorted) do
-    if modCount >= modsRowPerPage * modsColPerRow then break end
     id = id + 1
     if id >= startIndex and id <= endIndex then
-      table.insert(current_row, create_box(modInfo, MOD_BOX_SCALE))
-      modCount = modCount + 1
-      if modCount % modsColPerRow == 0 then
-        table.insert(modNodes, {
-          n = G.UIT.R,
-          config = { padding = 0, align = "lc" },
-          nodes = current_row
-        })
-        current_row = {}
-      end
+      table.insert(page_mods, modInfo)
     end
+    if id >= endIndex then break end
   end
 
-  if #current_row > 0 then
-    table.insert(modNodes, {
-      n = G.UIT.R,
-      config = { padding = 0, align = "lc" },
-      nodes = current_row
-    })
+  -- Place mods into a 2-D grid using column-major order.
+  local grid = {}
+  for r = 1, modsRowPerPage do grid[r] = {} end
+  for i, modInfo in ipairs(page_mods) do
+    local col = math.floor((i - 1) / modsRowPerPage) + 1
+    local row = ((i - 1) % modsRowPerPage) + 1
+    grid[row][col] = create_box(modInfo, MOD_BOX_SCALE)
+  end
+
+  -- Convert grid rows into UI row nodes.
+  local modNodes = {}
+  for r = 1, modsRowPerPage do
+    if grid[r][1] then
+      table.insert(modNodes, {
+        n = G.UIT.R,
+        config = { padding = 0, align = "lc" },
+        nodes = grid[r]
+      })
+    end
   end
   return modNodes
 end
@@ -200,17 +204,16 @@ local function _patch_dynamic()
           }}}
         })
       else
-        local orig_list   = SMODS.mod_list
-        local id          = 0
-        local modCount    = 0
-        local current_row = {}
+        local orig_list = SMODS.mod_list
 
+        -- Collect page mods into a flat list of UI boxes.
+        local page_boxes = {}
+        local id = 0
         for _, modInfo in ipairs(sorted) do
-          if modCount >= modsRowPerPage * modsColPerRow then break end
           id = id + 1
           if id >= startIndex and id <= endIndex then
-            -- Temporarily replace mod_list so the original function renders only
-            -- this one mod, letting createClickableModBox run naturally.
+            -- Temporarily replace mod_list so the original function renders
+            -- only this one mod, letting createClickableModBox run naturally.
             SMODS.mod_list = { modInfo }
             local ok, res = pcall(old, 1)
             SMODS.mod_list = orig_list  -- always restore immediately
@@ -232,26 +235,29 @@ local function _patch_dynamic()
             end
 
             if box then
-              table.insert(current_row, box)
-              modCount = modCount + 1
-              if modCount % modsColPerRow == 0 then
-                table.insert(modNodes, {
-                  n = G.UIT.R,
-                  config = { padding = 0, align = "lc" },
-                  nodes = current_row
-                })
-                current_row = {}
-              end
+              table.insert(page_boxes, box)
             end
           end
+          if id >= endIndex then break end
         end
 
-        if #current_row > 0 then
-          table.insert(modNodes, {
-            n = G.UIT.R,
-            config = { padding = 0, align = "lc" },
-            nodes = current_row
-          })
+        -- Place boxes into a 2-D grid using column-major order.
+        local grid = {}
+        for r = 1, modsRowPerPage do grid[r] = {} end
+        for i, box in ipairs(page_boxes) do
+          local col = math.floor((i - 1) / modsRowPerPage) + 1
+          local row = ((i - 1) % modsRowPerPage) + 1
+          grid[row][col] = box
+        end
+
+        for r = 1, modsRowPerPage do
+          if grid[r][1] then
+            table.insert(modNodes, {
+              n = G.UIT.R,
+              config = { padding = 0, align = "lc" },
+              nodes = grid[r]
+            })
+          end
         end
       end
 
