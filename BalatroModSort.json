@@ -3,8 +3,11 @@
   "name": "Balatro Mod Sort",
   "display_name": "Mod Sort",
   "author": [
-    "ChatGPT"
+    "SilvertongueRED",
+    "ChatGPT",
+    "Claude"
   ],
+  "icon": "icon.png",
   "description": "Sort your Mods menu by name, recently updated, or config changes — without changing load order.",
   "prefix": "bms",
   "main_file": "main.lua",
