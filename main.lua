@@ -35,10 +35,25 @@ local function _display_name(mod)
 end
 
 local function _group(mod)
-  -- 1) all enabled mods (with or without config) sorted together
-  -- 2) disabled mods
-  if mod and mod.disabled then return 2 end
+  -- 1) mods that failed to load (not can_load, not disabled)
+  -- 2) all enabled/loadable mods (with or without config) sorted together
+  -- 3) disabled mods
+  if mod and mod.disabled then return 3 end
+  if mod and mod.can_load then return 2 end
   return 1
+end
+
+-- Retrieve a named upvalue from a Lua function, returns nil on any failure.
+local function _try_get_upvalue(func, name)
+  if not debug or type(debug.getupvalue) ~= "function" then return nil end
+  local i = 1
+  while true do
+    local n, v = debug.getupvalue(func, i)
+    if n == nil then break end
+    if n == name then return v end
+    i = i + 1
+  end
+  return nil
 end
 
 local function _sorted_copy(mod_list)
@@ -60,18 +75,89 @@ local function _patch_dynamic()
   if type(SMODS.GUI.dynamicModListContent) ~= "function" then return false end
 
   local old = SMODS.GUI.dynamicModListContent
-  SMODS.GUI.dynamicModListContent = function(page, ...)
-    local orig = SMODS.mod_list
-    local swapped = false
-    if type(orig) == "table" then
-      SMODS.mod_list = _sorted_copy(orig)
-      swapped = true
-    end
 
-    local ok, res = pcall(old, page, ...)
-    if swapped then SMODS.mod_list = orig end
-    if not ok then error(res) end
-    return res
+  -- Extract Steamodded-internal local functions via upvalues so we can build
+  -- a full replacement that merges the config/no-config sections into one pass.
+  local create_box  = _try_get_upvalue(old, "createClickableModBox")
+  local recalc_list = _try_get_upvalue(old, "recalculateModsList")
+
+  if create_box and recalc_list then
+    -- Full replacement: combines the two can_load passes (with/without config_tab)
+    -- into a single alphabetical section.
+    SMODS.GUI.dynamicModListContent = function(page)
+      local scale   = 0.75
+      local sorted  = _sorted_copy(SMODS.mod_list)
+      local _, _, showingList, startIndex, endIndex, modsRowPerPage, modsColPerRow =
+        recalc_list(page)
+      local modNodes = {}
+
+      if not showingList then
+        table.insert(modNodes, {
+          n = G.UIT.R,
+          config = { padding = 0, align = "cm" },
+          nodes = {{ n = G.UIT.T, config = {
+            text = localize('b_no_mods'), shadow = true,
+            scale = scale * 0.5, colour = G.C.UI.TEXT_DARK
+          }}}
+        })
+      else
+        local modCount    = 0
+        local id          = 0
+        local current_row = {}
+
+        -- Three conditions instead of four: the original two can_load passes
+        -- (can_load+config_tab and can_load+not config_tab) are merged into one.
+        for _, condition in ipairs({
+          function(m) return not m.can_load and not m.disabled end,
+          function(m) return m.can_load end,
+          function(m) return m.disabled end,
+        }) do
+          for _, modInfo in ipairs(sorted) do
+            if modCount >= modsRowPerPage * modsColPerRow then break end
+            if condition(modInfo) then
+              id = id + 1
+              if id >= startIndex and id <= endIndex then
+                table.insert(current_row, create_box(modInfo, scale * 0.5))
+                modCount = modCount + 1
+                if modCount % modsColPerRow == 0 then
+                  table.insert(modNodes, {
+                    n = G.UIT.R,
+                    config = { padding = 0, align = "lc" },
+                    nodes = current_row
+                  })
+                  current_row = {}
+                end
+              end
+            end
+          end
+        end
+
+        if #current_row > 0 then
+          table.insert(modNodes, {
+            n = G.UIT.R,
+            config = { padding = 0, align = "lc" },
+            nodes = current_row
+          })
+        end
+      end
+
+      return { n = G.UIT.C, config = { r = 0.1, align = "cm", padding = 0 }, nodes = modNodes }
+    end
+  else
+    -- Fallback when the debug library or upvalue names are unavailable:
+    -- sort mod_list so each section is alphabetical even if they remain separate.
+    SMODS.GUI.dynamicModListContent = function(page, ...)
+      local orig    = SMODS.mod_list
+      local swapped = false
+      if type(orig) == "table" then
+        SMODS.mod_list = _sorted_copy(orig)
+        swapped = true
+      end
+      local ok, res = pcall(old, page, ...)
+      if swapped then SMODS.mod_list = orig end
+      if not ok then error(res) end
+      return res
+    end
   end
 
   SMODS.GUI.__amz_patched = true
