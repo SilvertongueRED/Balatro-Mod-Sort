@@ -34,15 +34,6 @@ local function _display_name(mod)
   return name
 end
 
-local function _group(mod)
-  -- 1) mods that failed to load (not can_load, not disabled)
-  -- 2) all enabled/loadable mods (with or without config) sorted together
-  -- 3) disabled mods
-  if mod and mod.disabled then return 3 end
-  if mod and mod.can_load then return 2 end
-  return 1
-end
-
 -- Retrieve a named upvalue from a Lua function, returns nil on any failure.
 local function _try_get_upvalue(func, name)
   if not debug or type(debug.getupvalue) ~= "function" then return nil end
@@ -60,8 +51,7 @@ local function _sorted_copy(mod_list)
   local t = {}
   for i, v in ipairs(mod_list or {}) do t[i] = v end
   table.sort(t, function(a, b)
-    local ga, gb = _group(a), _group(b)
-    if ga ~= gb then return ga < gb end
+    -- Pure alphabetical, no group separation
     local na, nb = _safe_lower(_display_name(a)), _safe_lower(_display_name(b))
     if na ~= nb then return na < nb end
     return tostring(a.id or "") < tostring(b.id or "")
@@ -105,29 +95,20 @@ local function _patch_dynamic()
         local id          = 0
         local current_row = {}
 
-        -- Three conditions instead of four: the original two can_load passes
-        -- (can_load+config_tab and can_load+not config_tab) are merged into one.
-        for _, condition in ipairs({
-          function(m) return not m.can_load and not m.disabled end,
-          function(m) return m.can_load end,
-          function(m) return m.disabled end,
-        }) do
-          for _, modInfo in ipairs(sorted) do
-            if modCount >= modsRowPerPage * modsColPerRow then break end
-            if condition(modInfo) then
-              id = id + 1
-              if id >= startIndex and id <= endIndex then
-                table.insert(current_row, create_box(modInfo, scale * 0.5))
-                modCount = modCount + 1
-                if modCount % modsColPerRow == 0 then
-                  table.insert(modNodes, {
-                    n = G.UIT.R,
-                    config = { padding = 0, align = "lc" },
-                    nodes = current_row
-                  })
-                  current_row = {}
-                end
-              end
+        -- Single pass: pure alphabetical, no grouping
+        for _, modInfo in ipairs(sorted) do
+          if modCount >= modsRowPerPage * modsColPerRow then break end
+          id = id + 1
+          if id >= startIndex and id <= endIndex then
+            table.insert(current_row, create_box(modInfo, scale * 0.5))
+            modCount = modCount + 1
+            if modCount % modsColPerRow == 0 then
+              table.insert(modNodes, {
+                n = G.UIT.R,
+                config = { padding = 0, align = "lc" },
+                nodes = current_row
+              })
+              current_row = {}
             end
           end
         end
