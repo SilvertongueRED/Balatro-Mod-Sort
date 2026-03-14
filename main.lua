@@ -310,17 +310,22 @@ end
 
 local function _refresh_mods_list()
   local page = SMODS.LAST_VIEWED_MODS_PAGE or 1
-  -- Try to locate the dynamic mod-list area in the overlay menu and rebuild it.
+  -- Use Steamodded's own DynamicUIManager when available; otherwise replicate
+  -- the exact same UIBox config that updateDynamicAreas uses.
   pcall(function()
-    if not (G.OVERLAY_MENU and G.OVERLAY_MENU.get_UIE_by_ID) then return end
-    local area = G.OVERLAY_MENU:get_UIE_by_ID("modsList")
-    if not (area and area.config and area.config.object) then return end
-    area.config.object:remove()
-    area.config.object = UIBox{
-      definition = SMODS.GUI.dynamicModListContent(page),
-      config = { offset = { x = 0, y = 0 }, parent = area, type = "cm" }
-    }
-    area.UIBox:recalculate()
+    if SMODS.GUI.DynamicUIManager and type(SMODS.GUI.DynamicUIManager.updateDynamicAreas) == "function" then
+      SMODS.GUI.DynamicUIManager.updateDynamicAreas({
+        ["modsList"] = SMODS.GUI.dynamicModListContent(page)
+      })
+    elseif G.OVERLAY_MENU and G.OVERLAY_MENU.get_UIE_by_ID then
+      local area = G.OVERLAY_MENU:get_UIE_by_ID("modsList")
+      if not (area and area.config and area.config.object) then return end
+      area.config.object:remove()
+      area.config.object = UIBox{
+        definition = SMODS.GUI.dynamicModListContent(page),
+        config = { offset = { x = 0, y = 0.5 }, align = "cm", parent = area }
+      }
+    end
   end)
 end
 
