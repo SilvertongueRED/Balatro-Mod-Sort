@@ -87,14 +87,45 @@ local SORT_LABELS = {
 
 local _current_sort = "alpha"
 
+local _SORT_SAVE_PATH = "config/BalatroModSort_sort.txt"
+
+local function _save_sort_mode()
+  pcall(function()
+    if love and love.filesystem and type(love.filesystem.write) == "function" then
+      love.filesystem.write(_SORT_SAVE_PATH, _current_sort)
+    end
+  end)
+end
+
+local function _load_sort_mode()
+  pcall(function()
+    if love and love.filesystem and type(love.filesystem.read) == "function" then
+      local ok, data = pcall(love.filesystem.read, _SORT_SAVE_PATH)
+      if ok and type(data) == "string" then
+        data = data:match("^%s*(.-)%s*$") -- trim whitespace
+        for _, m in ipairs(SORT_MODES) do
+          if m == data then
+            _current_sort = data
+            return
+          end
+        end
+      end
+    end
+  end)
+end
+
+_load_sort_mode()
+
 local function _next_sort_mode()
   for i, m in ipairs(SORT_MODES) do
     if m == _current_sort then
       _current_sort = SORT_MODES[(i % #SORT_MODES) + 1]
+      _save_sort_mode()
       return
     end
   end
   _current_sort = SORT_MODES[1]
+  _save_sort_mode()
 end
 
 ----------------------------------------------------------------------
