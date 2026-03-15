@@ -28,6 +28,24 @@ local function _safe_lower(s)
   return string.lower(s)
 end
 
+-- modicon info
+SMODS.Atlas {
+  key = 'modicon',
+  path = 'modicon.png',
+  px = 64,
+  py = 64,
+  inject = function(self)
+    self.full_path = (self.mod and self.mod.path or SMODS.path) .. self.path
+    local file_data = assert(SMODS.NFS.newFileData(self.full_path),
+      ('Failed to collect file data for Atlas %s'):format(self.key))
+    self.image_data = assert(love.image.newImageData(file_data),
+      ('Failed to initialize image data for Atlas %s'):format(self.key))
+    self.image = love.graphics.newImage(self.image_data,
+      { mipmaps = true, dpiscale = 1 })
+    G[self.atlas_table][self.key_noloc or self.key] = self
+  end,
+}
+
 local function _display_name(mod)
   -- Prefer localized name if available, else mod.name, else mod.id
   local name = mod and (mod.name or mod.id) or ""
